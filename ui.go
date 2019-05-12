@@ -72,7 +72,6 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 	processArgs := con.GetProcessArgs()
 
 	var icon *canvas.Image
-	log.Info(appInfo.Icon)
 	if appInfo.Icon == "" {
 		resource := fyne.NewStaticResource("default_icon", defaultIcon)
 		icon = canvas.NewImageFromResource(resource)
