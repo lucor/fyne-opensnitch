@@ -71,7 +71,14 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 	pid := con.GetProcessId()
 	processArgs := con.GetProcessArgs()
 
-	icon := canvas.NewImageFromFile(appInfo.Icon)
+	var icon *canvas.Image
+	log.Info(appInfo.Icon)
+	if appInfo.Icon == "" {
+		resource := fyne.NewStaticResource("default_icon", defaultIcon)
+		icon = canvas.NewImageFromResource(resource)
+	} else {
+		icon = canvas.NewImageFromFile(appInfo.Icon)
+	}
 	icon.FillMode = canvas.ImageFillOriginal
 	icon.SetMinSize(fyne.NewSize(48, 48))
 

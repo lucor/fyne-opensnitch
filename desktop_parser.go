@@ -15,10 +15,14 @@ import (
 	"regexp"
 	"strings"
 
+	_ "github.com/lucor/fyne-opensnitch/statik"
+
 	"github.com/evilsocket/opensnitch/daemon/log"
+	"github.com/rakyll/statik/fs"
 )
 
 var desktopApps map[string]desktopApp
+var defaultIcon []byte
 
 type desktopApp struct {
 	Name string
@@ -26,7 +30,24 @@ type desktopApp struct {
 	Icon string
 }
 
+// init loads all desktopApp info and makes them available via the desktopApps map
 func init() {
+	statikFS, err := fs.New()
+	if err != nil {
+		log.Fatal("Could not init the icon filesystem %v", err)
+	}
+
+	f, err := statikFS.Open("/hicolor_apps_scalable_org.gnome.Terminal.png")
+	if err != nil {
+		log.Fatal("Could not open the default icon file from VFS: %v", err)
+	}
+	defer f.Close()
+
+	defaultIcon, err = ioutil.ReadAll(f)
+	if err != nil {
+		log.Fatal("Could not read the default icon content from VFS: %v", err)
+	}
+
 	// fixes contains some adjustement for the desktopApp mappings
 	fixes := map[string]string{
 		"/opt/google/chrome/google-chrome": "/opt/google/chrome/chrome",
@@ -112,7 +133,6 @@ func parseDesktopFile(desktopFile string) (desktopApp, error) {
 		if strings.HasPrefix(line, "Icon=") {
 			icon := strings.TrimPrefix(line, "Icon=")
 			if icon == "" {
-				da.Icon = "default"
 				continue
 			}
 			if filepath.IsAbs(icon) {
@@ -122,7 +142,6 @@ func parseDesktopFile(desktopFile string) (desktopApp, error) {
 			icon = filepath.Join("/usr/share/icons/hicolor/48x48/apps", icon) + ".png"
 			icon, err = resolvePath(icon)
 			if err != nil {
-				da.Icon = "default"
 				continue
 			}
 			da.Icon = icon
