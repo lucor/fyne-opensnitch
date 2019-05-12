@@ -251,10 +251,11 @@ func newApp(sigChan chan os.Signal) *osApp {
 }
 
 func generalStatsData(stats *protocol.Statistics) [][]string {
+	uptime := time.Duration(int(stats.GetUptime())) * time.Second
 	return [][]string{
 		{
 			stats.GetDaemonVersion(),
-			fmt.Sprintf("%d", stats.GetUptime()),
+			uptime.String(),
 			fmt.Sprintf("%d", stats.GetRules()),
 			fmt.Sprintf("%d", stats.GetConnections()),
 			fmt.Sprintf("%d", stats.GetDropped()),
