@@ -22,6 +22,8 @@ import (
 	"github.com/evilsocket/opensnitch/daemon/ui/protocol"
 )
 
+const osAppHealtCheck = 15 * time.Second
+
 // osApp represents the Fyne OpenSnitch application
 type osApp struct {
 	fyneApp     fyne.App
@@ -29,17 +31,45 @@ type osApp struct {
 	chClose     chan os.Signal
 	defaultRule *protocol.Rule
 	askTimeout  time.Duration
+	lastPing    uint64
 }
 
 // ShowAndRun show and run the application
 func (a *osApp) ShowAndRun() {
 	log.Info("starting Fyne OpenSnitch application")
+	healtChecker := time.NewTicker(osAppHealtCheck)
+	go func() {
+		var last uint64
+		var seen time.Time
+		for range healtChecker.C {
+			log.Info("old %d, new %d", last, a.lastPing)
+			if a.lastPing > last {
+				last = a.lastPing
+				seen = time.Now()
+				continue
+			}
+
+			lastSeenMsg := ""
+			if last != 0 {
+				lastSeenMsg = fmt.Sprintf(
+					" Last ping received %s ago.",
+					time.Since(seen).Truncate(time.Second),
+				)
+			}
+			log.Error("Daemon not available.%s", lastSeenMsg)
+			a.RefreshStats(&protocol.Statistics{})
+		}
+	}()
 	a.mainWin.ShowAndRun()
 }
 
 func (a *osApp) RefreshStats(st *protocol.Statistics) {
 	tabContainer := a.mainWin.Content().(*widget.TabContainer)
 	selectedTab := tabContainer.CurrentTab()
+
+	// Store last ping to report daemon availability
+	a.lastPing = st.GetUptime()
+
 	table := selectedTab.Content.(*table)
 	table.SetContent(generalStatsData(st))
 	a.mainWin.SetFixedSize(false)
@@ -328,10 +358,16 @@ func newApp(sigChan chan os.Signal, cfg *uiConfig) *osApp {
 }
 
 func generalStatsData(stats *protocol.Statistics) [][]string {
+	status := "running"
+	if stats.GetUptime() == 0 {
+		status = "waiting for connection"
+	}
 	uptime := time.Duration(int(stats.GetUptime())) * time.Second
+
 	return [][]string{
 		{
 			stats.GetDaemonVersion(),
+			status,
 			uptime.String(),
 			fmt.Sprintf("%d", stats.GetRules()),
 			fmt.Sprintf("%d", stats.GetConnections()),
@@ -340,9 +376,11 @@ func generalStatsData(stats *protocol.Statistics) [][]string {
 	}
 }
 
+var generalStatsDefaultValues = [][]string{[]string{"-", "waiting for connection", "0", "0", "0", "0"}}
+
 func generalStats() *table {
-	headers := []string{"Version", "Uptime", "Rules", "Connections", "Dropped"}
-	data := [][]string{[]string{"-", "0", "0", "0", "0"}}
+	headers := []string{"Version", "Daemon Status", "Uptime", "Rules", "Connections", "Dropped"}
+	data := generalStatsDefaultValues
 	return newTable(headers, data)
 }
 
