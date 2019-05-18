@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"image/color"
 	"os"
+	"regexp"
 	"strconv"
-	"sync"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,9 +24,11 @@ import (
 
 // osApp represents the Fyne OpenSnitch application
 type osApp struct {
-	fyneApp fyne.App
-	mainWin fyne.Window
-	chClose chan os.Signal
+	fyneApp     fyne.App
+	mainWin     fyne.Window
+	chClose     chan os.Signal
+	defaultRule *protocol.Rule
+	askTimeout  time.Duration
 }
 
 // ShowAndRun show and run the application
@@ -46,13 +49,11 @@ func (a *osApp) RefreshStats(st *protocol.Statistics) {
 
 // Ask asks client a rule for the con connection
 func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
-
-	var wg sync.WaitGroup
-
 	win := a.fyneApp.NewWindow("OpenSnitch")
 	win.SetFixedSize(true)
 	win.CenterOnScreen()
 
+	log.Info("con: %#v", con)
 	processPath := con.GetProcessPath()
 	appInfo, ok := desktopApps[processPath]
 	if !ok {
@@ -81,38 +82,42 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 	icon.FillMode = canvas.ImageFillOriginal
 	icon.SetMinSize(fyne.NewSize(48, 48))
 
-	// Create the rule
-	// Default to accept connection once for the current process if not action is specified
-	// Note: rule is applied also on window close
-	t := time.Now()
-	ruleName := fmt.Sprintf("test-%d%d%d", t.Hour(), t.Minute(), t.Second())
-	r := &protocol.Rule{
-		Name:     ruleName,
-		Action:   string(rule.Allow),
-		Duration: string(rule.Once),
-		Operator: &protocol.Operator{
-			Type:    string(rule.Simple),
-			Operand: string(rule.OpProcessPath),
-			Data:    con.GetProcessPath(),
-		},
+	// create a ruleCh where will wait an for user action or timeout
+	ruleCh := make(chan *protocol.Rule, 1)
+
+	// uiDefaultRule is the default rule to apply for the current process on
+	// timeout or window close
+	var uiDefaultRule *protocol.Rule
+	var userRule *protocol.Rule
+
+	type data struct {
+		Action      string
+		Operand     string
+		OperandData string
+		Duration    string
 	}
 
+	d := data{}
 	// Select widget for the action
 	action := widget.NewSelect([]string{"Allow Connections", "Block connections"}, func(s string) {
-		r.Action = string(rule.Allow)
+		d.Action = string(rule.Allow)
 		if s == "Block connections" {
-			r.Action = string(rule.Deny)
+			d.Action = string(rule.Deny)
 		}
 	})
-	action.SetSelected("Allow Connections")
+	if a.defaultRule.GetAction() == string(rule.Allow) {
+		action.SetSelected("Allow Connections")
+	} else {
+		action.SetSelected("Block Connections")
+	}
 
 	// Map select with label with key
 	operators := map[string]string{
-		"from this process":                 "process",
-		fmt.Sprintf("from user %d", uid):    "user",
-		fmt.Sprintf("to port %d", destPort): "port",
-		fmt.Sprintf("to %s", destIP):        "ip",
-		fmt.Sprintf("to %s", destHost):      "host",
+		"from this process":                 string(rule.OpProcessPath),
+		fmt.Sprintf("from user %d", uid):    string(rule.OpUserId),
+		fmt.Sprintf("to port %d", destPort): string(rule.OpDstPort),
+		fmt.Sprintf("to %s", destIP):        string(rule.OpDstIP),
+		fmt.Sprintf("to %s", destHost):      string(rule.OpDstHost),
 	}
 
 	// Extract keys to pass to widget
@@ -123,37 +128,61 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 
 	// Select widget for the operator
 	operator := widget.NewSelect(operatorOpts, func(s string) {
-		simple := string(rule.Simple)
-		switch operators[s] {
-		case "process":
-			r.Operator = &protocol.Operator{Type: simple, Operand: string(rule.OpProcessPath), Data: processPath}
-		case "user":
-			r.Operator = &protocol.Operator{Type: simple, Operand: string(rule.OpUserId), Data: strconv.Itoa(int(uid))}
-		case "port":
-			r.Operator = &protocol.Operator{Type: simple, Operand: string(rule.OpDstPort), Data: strconv.Itoa(int(destPort))}
-		case "ip":
-			r.Operator = &protocol.Operator{Type: simple, Operand: string(rule.OpDstIP), Data: destIP}
-		case "host":
-			r.Operator = &protocol.Operator{Type: simple, Operand: string(rule.OpDstHost), Data: destHost}
+		op := operators[s]
+		d.Operand = op
+		switch op {
+		case string(rule.OpProcessPath):
+			d.OperandData = processPath
+		case string(rule.OpUserId):
+			d.OperandData = strconv.Itoa(int(uid))
+		case string(rule.OpDstPort):
+			d.OperandData = strconv.Itoa(int(destPort))
+		case string(rule.OpDstIP):
+			d.OperandData = destIP
+		case string(rule.OpDstHost):
+			d.OperandData = destHost
 		}
 	})
-	operator.SetSelected("from this process")
+
+	log.Info("get operand %s", a.defaultRule.Operator.GetOperand())
+	for k, v := range operators {
+		if v == a.defaultRule.Operator.GetOperand() {
+			operator.SetSelected(k)
+			break
+		}
+	}
 
 	// Select widget for the duration
 	duration := widget.NewSelect([]string{"once", "for this session", "forever"}, func(s string) {
 		switch s {
 		case "once":
-			r.Duration = string(rule.Once)
+			d.Duration = string(rule.Once)
 		case "for this session":
-			r.Duration = string(rule.Restart)
+			d.Duration = string(rule.Restart)
 		case "forever":
-			r.Duration = string(rule.Always)
+			d.Duration = string(rule.Always)
 		}
 	})
-	duration.SetSelected("once")
+	switch a.defaultRule.GetDuration() {
+	case string(rule.Once):
+		duration.SetSelected("once")
+	case string(rule.Restart):
+		duration.SetSelected("for this session")
+	case string(rule.Always):
+		duration.SetSelected("forever")
+	}
 
 	// Apply button
 	applyBtn := widget.NewButton("Apply", func() {
+		userRule = &protocol.Rule{
+			Action:   d.Action,
+			Duration: d.Duration,
+			Operator: &protocol.Operator{
+				Type:    string(rule.Simple),
+				Operand: d.Operand,
+				Data:    d.OperandData,
+			},
+		}
 		win.Close()
 	})
 	applyBtn.Style = widget.PrimaryButton
@@ -163,8 +192,8 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 			widget.NewHBox(
 				icon,
 				widget.NewVBox(
-					layout.NewSpacer(),
 					widget.NewLabelWithStyle(processName, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabel(processPath),
 					layout.NewSpacer(),
 				),
 				layout.NewSpacer(),
@@ -172,13 +201,20 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 
 			makeLine(),
 
-			widget.NewLabel(fmt.Sprintf("%s is connecting to %s on %s port %d", processPath, destHost, proto, destPort)),
+			widget.NewLabel(fmt.Sprintf("%s is connecting to %s on %s port %d", processName, destHost, proto, destPort)),
 
 			fyne.NewContainerWithLayout(layout.NewGridLayout(4),
 				action,
 				operator,
 				duration,
 				widget.NewVBox(applyBtn),
+			),
+
+			makeLine(),
+
+			widget.NewHBox(
+				widget.NewLabelWithStyle("Process", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				widget.NewLabel(strings.Join(processArgs, "\n")),
 			),
 
 			fyne.NewContainerWithLayout(layout.NewGridLayout(3),
@@ -206,25 +242,56 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 				widget.NewLabel(fmt.Sprintf("%d", pid)),
 				layout.NewSpacer(),
 
-				widget.NewLabelWithStyle("Process arguments", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-				widget.NewLabel(fmt.Sprintf("%v", processArgs)),
-				layout.NewSpacer(),
+				// widget.NewLabelWithStyle("Process arguments", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				// widget.NewLabel(fmt.Sprintf("%v", processArgs)),
+				// layout.NewSpacer(),
 			),
 		),
 	)
+
+	uiDefaultRule = &protocol.Rule{
+		Action:   d.Action,
+		Duration: d.Duration,
+		Operator: &protocol.Operator{
+			Type:    string(rule.Simple),
+			Operand: d.Operand,
+			Data:    d.OperandData,
+		},
+	}
+
 	win.SetOnClosed(func() {
-		wg.Done()
+		if userRule != nil {
+			ruleCh <- userRule
+			return
+		}
+		ruleCh <- uiDefaultRule
 	})
 
-	wg.Add(1)
 	win.Show()
-	wg.Wait()
 
-	return r, true
+	var pr *protocol.Rule
+	select {
+	case r := <-ruleCh:
+		pr = r
+	case <-time.After(a.askTimeout):
+		log.Info("Timeout reached. Applying default rule")
+		pr = uiDefaultRule
+		win.Close()
+	}
+
+	makeRuleName(pr)
+	return pr, true
+}
+
+func makeRuleName(r *protocol.Rule) {
+	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
+	op := r.GetOperator()
+	name := fmt.Sprintf("%s-%s-%s", r.GetAction(), op.GetType(), op.GetData())
+	r.Name = reg.ReplaceAllString(name, "-")
 }
 
 // newApp returns a new fyne opensnitch application
-func newApp(sigChan chan os.Signal) *osApp {
+func newApp(sigChan chan os.Signal, cfg *uiConfig) *osApp {
 
 	fyneApp := app.New()
 
@@ -247,6 +314,16 @@ func newApp(sigChan chan os.Signal) *osApp {
 	return &osApp{
 		fyneApp: fyneApp,
 		mainWin: mainWin,
+		defaultRule: &protocol.Rule{
+			Name:     "ui.default",
+			Action:   string(cfg.DefaultAction),
+			Duration: string(cfg.DefaultDuration),
+			Operator: &protocol.Operator{
+				Type:    string(rule.Simple),
+				Operand: string(cfg.DefaultOperator),
+			},
+		},
+		askTimeout: time.Duration(cfg.DefaultTimeout) * time.Second,
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"net"
 	"os"
 	"os/signal"
@@ -21,7 +22,23 @@ var (
 	server   *grpc.Server
 )
 
+// flag variables
+var (
+	configFile string
+	debug      = false
+)
+
 func main() {
+
+	flag.StringVar(&configFile, "config", "~/.opensnitch/ui-config.json", "UI configuration file")
+	flag.BoolVar(&debug, "debug", debug, "Enable debug logs.")
+	flag.Parse()
+
+	if debug {
+		log.MinLevel = log.DEBUG
+	} else {
+		log.MinLevel = log.INFO
+	}
 
 	sigChan = make(chan os.Signal, 1)
 	signal.Notify(sigChan,
@@ -30,8 +47,13 @@ func main() {
 		syscall.SIGTERM,
 		syscall.SIGQUIT)
 
+	cfg, err := loadConfigFromFile(configFile)
+	if err != nil {
+		log.Error("Error loading configuration file %s. %v", configFile, err)
+	}
+
 	statChan = make(chan *protocol.Statistics)
-	app := newApp(sigChan)
+	osApp := newApp(sigChan, cfg)
 
 	go func() {
 		//Starts the gRPC server
@@ -43,7 +65,9 @@ func main() {
 		server = grpc.NewServer()
 		protocol.RegisterUIServer(
 			server,
-			&osServer{osApp: app},
+			&osServer{
+				osApp: osApp,
+			},
 		)
 
 		log.Info("OpenSnitch gRPC server listening on socket: unix://%s", uiSocket)
@@ -52,11 +76,11 @@ func main() {
 		}
 	}()
 
-	go app.ShowAndRun()
+	go osApp.ShowAndRun()
 	for {
 		select {
 		case st := <-statChan:
-			app.RefreshStats(st)
+			osApp.RefreshStats(st)
 		case sig := <-sigChan:
 			log.Raw("\n")
 			log.Important("Got signal: %v", sig)

@@ -10,9 +10,8 @@ import (
 
 // Server represents an OpenSnitch UI Server
 type osServer struct {
-	server      *grpc.Server
-	DefaultRule *protocol.Rule
-	osApp       *osApp
+	server *grpc.Server
+	osApp  *osApp
 }
 
 // Ping reply to an OpenSnitch daemon client ping request and send to statChan the
@@ -24,7 +23,6 @@ func (s *osServer) Ping(ctx context.Context, pr *protocol.PingRequest) (*protoco
 
 // AskRule ask to the UI application for a Rule for the specified connection
 func (s *osServer) AskRule(ctx context.Context, conn *protocol.Connection) (*protocol.Rule, error) {
-	// TODO send a default rule on timeout
 	r, _ := s.osApp.AskRule(conn)
 	return r, nil
 }
