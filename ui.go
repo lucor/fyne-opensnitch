@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +22,8 @@ import (
 )
 
 const osAppHealtCheck = 15 * time.Second
+const minHeight = 400
+const minWidth = 600
 
 // osApp represents the Fyne OpenSnitch application
 type osApp struct {
@@ -42,7 +43,6 @@ func (a *osApp) ShowAndRun() {
 		var last uint64
 		var seen time.Time
 		for range healtChecker.C {
-			log.Info("old %d, new %d", last, a.lastPing)
 			if a.lastPing > last {
 				last = a.lastPing
 				seen = time.Now()
@@ -70,11 +70,19 @@ func (a *osApp) RefreshStats(st *protocol.Statistics) {
 	// Store last ping to report daemon availability
 	a.lastPing = st.GetUptime()
 
-	table := selectedTab.Content.(*table)
-	table.SetContent(generalStatsData(st))
-	a.mainWin.SetFixedSize(false)
-	a.mainWin.Resize(tabContainer.MinSize())
-	a.mainWin.SetFixedSize(true)
+	data := [][]string{}
+	switch tabContainer.CurrentTabIndex() {
+	case 0:
+		data = generalTabData(st)
+		table := selectedTab.Content.(*table)
+		table.SetData(data)
+	case 1:
+		data = eventsTabData(st)
+		scroll := selectedTab.Content.(*widget.ScrollContainer)
+		table := scroll.Content.(*table)
+		table.SetData(data)
+	}
+
 }
 
 // Ask asks client a rule for the con connection
@@ -83,7 +91,6 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 	win.SetFixedSize(true)
 	win.CenterOnScreen()
 
-	log.Info("con: %#v", con)
 	processPath := con.GetProcessPath()
 	appInfo, ok := desktopApps[processPath]
 	if !ok {
@@ -100,7 +107,7 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 	destHost := con.GetDstHost()
 	uid := con.GetUserId()
 	pid := con.GetProcessId()
-	processArgs := con.GetProcessArgs()
+	//processArgs := con.GetProcessArgs()
 
 	var icon *canvas.Image
 	if appInfo.Icon == "" {
@@ -242,11 +249,6 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 
 			makeLine(),
 
-			widget.NewHBox(
-				widget.NewLabelWithStyle("Process", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-				widget.NewLabel(strings.Join(processArgs, "\n")),
-			),
-
 			fyne.NewContainerWithLayout(layout.NewGridLayout(3),
 				widget.NewLabelWithStyle("Source IP", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 				widget.NewLabel(srcIP),
@@ -271,10 +273,6 @@ func (a *osApp) AskRule(con *protocol.Connection) (*protocol.Rule, bool) {
 				widget.NewLabelWithStyle("Process ID", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 				widget.NewLabel(fmt.Sprintf("%d", pid)),
 				layout.NewSpacer(),
-
-				// widget.NewLabelWithStyle("Process arguments", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-				// widget.NewLabel(fmt.Sprintf("%v", processArgs)),
-				// layout.NewSpacer(),
 			),
 		),
 	)
@@ -325,15 +323,22 @@ func newApp(sigChan chan os.Signal, cfg *uiConfig) *osApp {
 
 	fyneApp := app.New()
 
-	//mainWin := statsWindow(fyneApp, stats)
 	mainWin := fyneApp.NewWindow("OpenSnitch Network Statistics")
-	mainWin.SetFixedSize(true)
+	scEventTab := widget.NewScrollContainer(
+		makeEventsTab(),
+	)
 
 	content := widget.NewTabContainer(
-		widget.NewTabItem("General", generalStats()),
+		widget.NewTabItem("General", makeGeneralTab()),
+		widget.NewTabItem("Events", scEventTab),
 	)
 
 	mainWin.SetContent(content)
+
+	initSize := fyne.Size{Width: mainWin.Content().MinSize().Width, Height: minHeight}
+
+	scEventTab.Resize(initSize)
+	mainWin.Resize(initSize)
 
 	mainWin.SetOnClosed(func() {
 		log.Important("Received close on main app")
@@ -355,33 +360,6 @@ func newApp(sigChan chan os.Signal, cfg *uiConfig) *osApp {
 		},
 		askTimeout: time.Duration(cfg.DefaultTimeout) * time.Second,
 	}
-}
-
-func generalStatsData(stats *protocol.Statistics) [][]string {
-	status := "running"
-	if stats.GetUptime() == 0 {
-		status = "waiting for connection"
-	}
-	uptime := time.Duration(int(stats.GetUptime())) * time.Second
-
-	return [][]string{
-		{
-			stats.GetDaemonVersion(),
-			status,
-			uptime.String(),
-			fmt.Sprintf("%d", stats.GetRules()),
-			fmt.Sprintf("%d", stats.GetConnections()),
-			fmt.Sprintf("%d", stats.GetDropped()),
-		},
-	}
-}
-
-var generalStatsDefaultValues = [][]string{[]string{"-", "waiting for connection", "0", "0", "0", "0"}}
-
-func generalStats() *table {
-	headers := []string{"Version", "Daemon Status", "Uptime", "Rules", "Connections", "Dropped"}
-	data := generalStatsDefaultValues
-	return newTable(headers, data)
 }
 
 func makeLine() fyne.CanvasObject {
