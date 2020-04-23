@@ -76,18 +76,21 @@ func main() {
 		}
 	}()
 
-	go osApp.ShowAndRun()
-	for {
-		select {
-		case st := <-statChan:
-			osApp.RefreshStats(st)
-		case sig := <-sigChan:
-			log.Raw("\n")
-			log.Important("Got signal: %v", sig)
-			log.Info("Shutting down grpc server...")
-			server.Stop()
-			log.Info("All done, bye")
-			os.Exit(0)
+	go func() {
+		for {
+			select {
+			case st := <-statChan:
+				osApp.RefreshStats(st)
+			case sig := <-sigChan:
+				log.Raw("\n")
+				log.Important("Got signal: %v", sig)
+				log.Info("Shutting down grpc server...")
+				server.Stop()
+				log.Info("All done, bye")
+				os.Exit(0)
+			}
 		}
-	}
+	}()
+
+	osApp.ShowAndRun()
 }
