@@ -1,5 +1,9 @@
 # Fyne OpenSnitch
 
+<div align="center">
+    <img alt="Fyne OpenSnitch" src="Icon.png" height="160" />
+</div>
+
 An [OpenSnitch](https://github.com/evilsocket/opensnitch) UI in Go using [Fyne](https://fyne.io)
 
 The application is running as a gRPC server on a unix socket and will interact with OpenSnitch daemon.
@@ -51,6 +55,7 @@ and every time an action is required to add a new rule:
 
 ## Credits
 
+- [Icon](https://github.com/evilsocket/opensnitch/blob/v1.3.0/ui/opensnitch/res/icon.png) is from OpenSnitch
 - [OpenSnitch](https://github.com/evilsocket/opensnitch)
 - [Fyne](https://github.com/fyne-io/fyne)
 - [Statik](https://github.com/rakyll/statik) for the static assets embedding
