@@ -8,7 +8,7 @@ require (
 	github.com/evilsocket/ftrace v1.2.0 // indirect
 	github.com/evilsocket/opensnitch v0.0.0-20190302122427-5c8f7102c29c
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/go-gl/glfw v0.0.0-20190409004039-e6da0acd62b1 // indirect
+	github.com/go-gl/glfw v0.0.0-20210311203641-62640a716d48 // indirect
 	github.com/golang/protobuf v1.3.1 // indirect
 	github.com/google/gopacket v1.1.16 // indirect
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
